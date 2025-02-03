@@ -1,31 +1,97 @@
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:optimate_new/firebase_options.dart';
-import 'package:optimate_new/pages/home_page.dart';
-// import 'package:optimate_new/pages/introductory_page.dart';
+import 'package:camera/camera.dart';
+import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:flutter/services.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  runApp(const MyApp());
+class ObjectDetectionPage extends StatefulWidget {
+  @override
+  _ObjectDetectionPageState createState() => _ObjectDetectionPageState();
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class _ObjectDetectionPageState extends State<ObjectDetectionPage> {
+  CameraController? _cameraController;
+  List<dynamic>? _recognitions;
+  FlutterTts flutterTts = FlutterTts();
+  bool isSpeaking = false;
+  late Interpreter _interpreter; // Declare the interpreter
+  late List<String> _labels;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeCamera();
+    _loadModel();
+  }
+
+  // Initialize the camera
+  void _initializeCamera() async {
+    final cameras = await availableCameras();
+    _cameraController = CameraController(cameras[0], ResolutionPreset.medium);
+    await _cameraController?.initialize();
+    if (mounted) setState(() {});
+  }
+
+  // Load the TensorFlow Lite model and labels
+  void _loadModel() async {
+    _interpreter = await Interpreter.fromAsset('assets/model.tflite');
+    _labels = await _loadLabels();
+  }
+
+  // Load the labels from the file
+  Future<List<String>> _loadLabels() async {
+    final labelFile = await rootBundle.loadString('assets/labels.txt');
+    return labelFile.split('\n');
+  }
+
+  // Run inference on the frame from the camera
+  void _runModelOnFrame(CameraImage image) async {
+    final inputImage = _processCameraImage(image);
+
+    // Run the model
+    var output =
+        List.filled(1, List.filled(1, 0.0)); // Modify based on model output
+    _interpreter.run(inputImage, output);
+
+    // Extract results
+    if (output.isNotEmpty) {
+      int detectedClass = output[0][0].toInt();
+      String detectedObject = _labels[detectedClass];
+
+      if (!isSpeaking) {
+        isSpeaking = true;
+        await flutterTts.speak(detectedObject);
+        isSpeaking = false;
+      }
+    }
+
+    setState(() {
+      _recognitions = output; // Store recognitions if needed
+    });
+  }
+
+  // Process the camera image to prepare it for input to the model
+  List<List<List<int>>> _processCameraImage(CameraImage image) {
+    // Implement the necessary preprocessing steps like resizing and normalizing
+    // based on your model requirements
+    return List.filled(
+        image.height, List.filled(image.width, List.filled(3, 0)));
+  }
+
+  @override
+  void dispose() {
+    _cameraController?.dispose();
+    _interpreter.close(); // Close the interpreter when done
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'OptiMate',
-      builder: (context, child) {
-        return MediaQuery(
-          data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
-          child: child!,
-        );
-      },
-      home: const MyHomePage(),
+    return Scaffold(
+      appBar: AppBar(title: Text('Detecting Objects')),
+      body: _cameraController?.value.isInitialized ?? false
+          ? CameraPreview(_cameraController!)
+          : Center(child: CircularProgressIndicator()),
     );
   }
 }
